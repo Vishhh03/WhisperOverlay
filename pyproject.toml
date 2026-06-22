@@ -1,0 +1,53 @@
+[project]
+name = "voice-notes"
+version = "0.1.0"
+description = "Global-hotkey voice dictation notes app"
+requires-python = ">=3.10,<3.13"
+dependencies = [
+    "torch==2.5.1",
+    "faster-whisper==1.0.3",
+    "ctranslate2==4.5.0",
+    "setuptools==69.5.1",
+    "requests",
+    "sounddevice==0.4.6",
+    "numpy==1.26.4",
+    "keyboard==0.13.5",
+    "pystray==0.19.5",
+    "pillow==10.3.0",
+]
+
+# NOTE: we deliberately do NOT install nvidia-cudnn-cu12 / nvidia-cublas-cu12
+# as separate packages. torch already bundles its own cudnn DLLs inside
+# torch/lib/. Installing the standalone nvidia-cudnn-cu12 package caused a
+# DLL version conflict (WinError 127) when ctranslate2 triggered torch's
+# import, because two different cudnn builds ended up fighting for the
+# same DLL names. See cuda_path_fix.py for how we point CTranslate2 at
+# torch's bundled DLLs instead.
+#
+# IMPORTANT, CORRECTED UNDERSTANDING: torch 2.5.1+cu121 actually bundles
+# cuDNN 9.x (confirmed via the DLL filenames in torch/lib: cudnn64_9.dll,
+# cudnn_ops64_9.dll, etc - NOT cudnn 8 as we incorrectly assumed earlier).
+# Per the official faster-whisper docs, ctranslate2 >= 4.5.0 requires
+# cuDNN 9, while ctranslate2 4.4.0 expects cuDNN 8. We had pinned 4.4.0
+# based on a wrong assumption, which caused a lazy DLL-load failure
+# ("Could not locate cudnn_ops_infer64_8.dll") on the FIRST transcribe()
+# call (model construction succeeds either way since it doesn't load every
+# kernel eagerly - the mismatch only surfaces once real inference runs).
+# ctranslate2==4.5.0 is the correct match for torch's actual cuDNN 9 DLLs.
+#
+# setuptools is pinned to 69.5.1: ctranslate2 imports pkg_resources at
+# startup, but setuptools >= ~81 no longer reliably bundles pkg_resources by
+# default, causing ModuleNotFoundError. 69.5.1 is a known-good older version
+# that still includes it.
+
+# torch is installed separately with the CUDA index (see SETUP.md) since
+# the CUDA build isn't on the default PyPI index - uv handles this cleanly
+# via a per-source index override below.
+
+[tool.uv.sources]
+torch = { index = "pytorch-cu121" }
+
+[[tool.uv.index]]
+name = "pytorch-cu121"
+url = "https://download.pytorch.org/whl/cu121"
+explicit = true
