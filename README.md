@@ -1,4 +1,4 @@
-Transribe you Audio!!
+Transcribe you Audio!!
 
 This is a barebones readme just to get you started.
 
