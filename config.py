@@ -18,11 +18,12 @@ CONFIG_PATH = os.path.join(CONFIG_DIR, "config.json")
 DEFAULTS = {
     "hotkey_listen": "ctrl+alt+r",
     "hotkey_notes_window": "ctrl+alt+n",
+    "hotkey_typing": "ctrl+alt+t",
 
     "model_size": "small",
     "device": "cuda",
     "compute_type": "float16",
-    "chunk_seconds": 2.5,
+    "chunk_seconds": 1.5,
     "overlap_seconds": 0.5,
     "vad_filter": False,
     "silence_rms_threshold": 0.003,
@@ -101,6 +102,7 @@ Edit `config.json` in this folder, then restart the app for changes to apply.
 |-------------------------------|----------------------------------------------------------------------------|
 | hotkey_listen                | Global hotkey to start/stop listening (e.g. "ctrl+alt+r")                 |
 | hotkey_notes_window           | Global hotkey to open the notes/settings window                          |
+| hotkey_typing                | Global hotkey to start/stop typing-mode (types directly into focused app) |
 | model_size                   | Whisper model size: "base" (fastest), "small" (balanced), "medium" (best) |
 | device                       | "cuda" for GPU, "cpu" to force CPU                                        |
 | compute_type                 | "float16" for GPU, "int8" for CPU                                         |

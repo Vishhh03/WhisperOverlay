@@ -30,6 +30,7 @@ from engine import TranscriptionEngine
 from overlay import SubtitleOverlay
 from notes_window import NotesWindow
 from subtitle_lines import SubtitleLineBuffer
+from typing_output import TypingOutput
 import storage
 from log_setup import get_logger, get_log_path
 
@@ -55,10 +56,12 @@ class VoiceNotesApp:
         self.notes_window = NotesWindow(root)
         self.engine = TranscriptionEngine(on_text=self._on_text, on_status=self._on_status, cfg=self.cfg)
         self.subtitle_buffer = SubtitleLineBuffer(self.cfg)
+        self.typing_output = TypingOutput()
 
         self.session_text_parts = []
         self.tray_icon = None
         self._last_toggle_time = 0.0
+        self._active_mode = None  # None, "overlay", or "typing"
 
         self._register_hotkeys()
         self._start_tray()
@@ -70,13 +73,20 @@ class VoiceNotesApp:
     def _handle_new_text(self, text):
         self.session_text_parts.append(text)
 
-        finalized_line = self.subtitle_buffer.add_text(text)
-        if finalized_line:
-            duration_ms = self.subtitle_buffer.display_duration_ms(finalized_line)
-            self.overlay.show_text(finalized_line, duration_ms=duration_ms)
-        # If no line was finalized yet, we're still accumulating - the
-        # overlay keeps showing whatever the last finalized line was,
-        # rather than flickering with every small chunk update.
+        if self._active_mode == "typing":
+            self.typing_output.type_text(text)
+            return
+
+        # default / "overlay" mode
+        current_line_text = self.subtitle_buffer.add_text(text)
+        if current_line_text:
+            # Always show immediately - duration here just needs to outlast
+            # the gap until the next chunk arrives (chunk_seconds), with a
+            # bit of buffer. It gets refreshed every time new text comes in,
+            # so it only actually expires once you stop talking.
+            chunk_seconds = float(self.cfg.get("chunk_seconds", 2.5))
+            duration_ms = int(chunk_seconds * 1000) + 1500
+            self.overlay.show_text(current_line_text, duration_ms=duration_ms)
 
     def _on_status(self, status):
         self.root.after(0, self._update_status, status)
@@ -99,6 +109,12 @@ class VoiceNotesApp:
 
     # ---------- Actions ----------
     def toggle_listening(self):
+        self._toggle_mode("overlay")
+
+    def toggle_typing(self):
+        self._toggle_mode("typing")
+
+    def _toggle_mode(self, requested_mode: str):
         now = time.monotonic()
         if now - self._last_toggle_time < 0.75:
             log.debug("Ignoring duplicate toggle within debounce window.")
@@ -106,14 +122,31 @@ class VoiceNotesApp:
         self._last_toggle_time = now
 
         if self.engine.is_listening():
-            log.info("Toggling listening OFF.")
+            if self._active_mode != requested_mode:
+                # A different mode is currently active - ignore, don't let
+                # the typing hotkey interrupt an overlay session or vice
+                # versa. Stop the CURRENT mode first if you want to switch.
+                log.info(
+                    "Ignoring %s toggle - %s mode is currently active. Stop it first.",
+                    requested_mode, self._active_mode,
+                )
+                return
+            log.info("Toggling %s mode OFF.", requested_mode)
             self.engine.stop()
-            self._flush_subtitle_buffer()
-            self._save_session_if_any()
+            if requested_mode == "overlay":
+                self._flush_subtitle_buffer()
+                self._save_session_if_any()
+            else:
+                self.session_text_parts = []  # typing mode already delivered text directly, nothing to save
+            self._active_mode = None
         else:
-            log.info("Toggling listening ON.")
+            log.info("Toggling %s mode ON.", requested_mode)
+            self._active_mode = requested_mode
             self.session_text_parts = []
-            self.subtitle_buffer.reset()
+            if requested_mode == "overlay":
+                self.subtitle_buffer.reset()
+            else:
+                self.typing_output.reset_session()
             threading.Thread(target=self.engine.start, daemon=True).start()
 
     def _flush_subtitle_buffer(self):
@@ -138,6 +171,7 @@ class VoiceNotesApp:
     def _register_hotkeys(self):
         listen_key = self.cfg.get("hotkey_listen", "ctrl+alt+r")
         notes_key = self.cfg.get("hotkey_notes_window", "ctrl+alt+n")
+        typing_key = self.cfg.get("hotkey_typing", "ctrl+alt+t")
 
         try:
             keyboard.add_hotkey(listen_key, lambda: self.root.after(0, self.toggle_listening))
@@ -152,6 +186,18 @@ class VoiceNotesApp:
             )
 
         try:
+            keyboard.add_hotkey(typing_key, lambda: self.root.after(0, self.toggle_typing))
+            log.info("Registered typing hotkey: %s", typing_key)
+        except Exception as e:
+            log.error("Failed to register typing hotkey '%s': %s", typing_key, e, exc_info=True)
+            messagebox.showwarning(
+                "Voice Notes - Hotkey",
+                f"Couldn't register the typing hotkey ({typing_key}).\n"
+                f"Try running the terminal as Administrator, or change "
+                f"hotkey_typing in config.json.\n\nDetails logged to: {get_log_path()}",
+            )
+
+        try:
             keyboard.add_hotkey(notes_key, lambda: self.root.after(0, self.show_notes_window))
             log.info("Registered notes-window hotkey: %s", notes_key)
         except Exception as e:
@@ -160,7 +206,8 @@ class VoiceNotesApp:
     # ---------- Tray ----------
     def _start_tray(self):
         menu = pystray.Menu(
-            pystray.MenuItem("Toggle Listening", lambda: self.root.after(0, self.toggle_listening), default=True),
+            pystray.MenuItem("Toggle Listening (Overlay)", lambda: self.root.after(0, self.toggle_listening), default=True),
+            pystray.MenuItem("Toggle Typing Mode", lambda: self.root.after(0, self.toggle_typing)),
             pystray.MenuItem("Show Notes / Settings", lambda: self.root.after(0, self.show_notes_window)),
             pystray.MenuItem("Quit", self._quit_app),
         )

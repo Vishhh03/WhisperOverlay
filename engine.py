@@ -205,6 +205,7 @@ class TranscriptionEngine:
         rms = float(np.sqrt(np.mean(np.square(audio))))
         if rms < self.silence_rms_threshold:
             log.debug("Skipping transcription, audio below silence threshold (rms=%.5f).", rms)
+            self._trim_buffer_overlap()
             return
 
         start_t = time.time()
@@ -226,6 +227,7 @@ class TranscriptionEngine:
         except Exception as e:
             log.error("Transcription failed: %s", e, exc_info=True)
             self._emit_status(f"error: {e}")
+            self._trim_buffer_overlap()
             return
 
         elapsed = time.time() - start_t
@@ -243,7 +245,14 @@ class TranscriptionEngine:
         else:
             log.debug("Transcription produced no text (%.2fs audio, %.2fs elapsed) - likely silence.", len(audio) / SAMPLE_RATE, elapsed)
 
-        # Keep a small overlap tail of raw audio for context, discard the rest
+        self._trim_buffer_overlap()
+
+    def _trim_buffer_overlap(self):
+        """Keep only a small overlap tail of raw audio for context, discard
+        the rest. Must run on every _transcribe_buffer() call regardless of
+        outcome (success, hallucination-dropped, silence-skipped, or error)
+        - otherwise the buffer grows unbounded and every subsequent attempt
+        re-transcribes the entire session's audio from the start."""
         overlap_samples = int(self.overlap_seconds * SAMPLE_RATE)
         with self._lock:
             if len(self._buffer) > overlap_samples:
